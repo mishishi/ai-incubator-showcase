@@ -81,47 +81,72 @@ def parse_research(path: Path) -> dict:
     decisions = []
     milestones = []
 
-    # 市场数据 — 提取 ## 市场数据 整节内容作为完整句子
-    mkt_section = re.search(r'## 市场数据\s*\n(.*?)(?=\n##\s|\Z)', text, re.DOTALL)
-    if mkt_section:
-        section_text = mkt_section.group(1).strip()
-        # Extract sentences ending with 。or !
-        sentences = re.findall(r'[^。！？\n]{15,120}[。！？]', section_text)
-        for s in sentences[:2]:
-            s = s.strip()
-            if '$' in s:
-                decisions.append(f"市场: {s}")
-    else:
-        # Fallback: market data regex
-        mkt = re.findall(r'\$[\d.]+[MB].*?(?:CAGR|增长率|增长)', text[:500])
-        if not mkt:
-            mkt = re.findall(r'\$[\d.]+[MB]', text[:500])
-        for m in mkt[:2]:
-            decisions.append(f"市场规模: {m.strip()[:60]}")
+    # 按 SKILL.md 定义的标准节结构拆分，不猜句子边界
+    sections = {}
+    for match in re.finditer(r'(?<!\n)##\s+([^\n]+)', text):
+        sections[match.group(1).strip()] = match.start()
 
-    # 趋势标题 (支持 **趋势1** 或 趋势1：格式)
-    trends = re.findall(r'(?:\*\*)?趋势\s*(\d+)(?:\*\*)?[：:]\s*([^\n]+)', text)
-    for num, name in trends[:3]:
-        milestones.append(f"趋势{num}: {name.strip()}")
-    if not trends:
-        # Try ## 趋势N：xxx format
-        trends2 = re.findall(r'##\s+趋势\s*(\d+)[：:]\s*([^\n]+)', text, re.MULTILINE)
-        for num, name in trends2[:3]:
-            milestones.append(f"趋势{num}: {name.strip()}")
+    def get_section(name_prefix: str) -> str:
+        """提取指定节标题下的所有内容（到下一个 ## 节为止）"""
+        matches = [(k, v) for k, v in sections.items() if k.startswith(name_prefix)]
+        if not matches:
+            return ""
+        # 取第一个匹配（最具体）
+        _, start = sorted(matches, key=lambda x: len(x[0]))[0]
+        end = len(text)
+        for k, v in sections.items():
+            if v > start:
+                end = min(end, v)
+        return text[start:end]
 
-    # 竞品 (bold names in competitor section)
-    competitors = re.findall(r'(?:^|\n)##?\s*.*?竞品.*?\n(.*?)(?=\n##|\Z)', text, re.DOTALL)
-    if competitors:
-        names = re.findall(r'\*\*([^*]{3,30})\*\*', competitors[0][:500])
-        for n in names[:5]:
-            decisions.append(f"竞品: {n.strip()}")
-    else:
-        # Try bold-only competitors
-        bold = re.findall(r'\*\*([^*]{3,30})\*\*', text)
-        for b in bold[:3]:
-            s = b.strip()
-            if len(s) > 3 and not any(c.isdigit() for c in s):
-                decisions.append(f"竞品: {s}")
+    # 市场数据：提取含 $ 或 亿 的数字段落
+    mkt = get_section("市场数据")
+    mkt_clean = re.sub(r'^\s*>\s*', '', mkt, flags=re.MULTILINE)
+    for line in mkt_clean.split('\n'):
+        line = line.strip()
+        if not line or line.startswith('-') or line.startswith('##'):
+            continue
+        # 提取含市场规模信息的句子
+        parts = re.split(r'[；;]', line)
+        for p in parts:
+            p = p.strip()
+            if len(p) > 8 and ('$' in p or '亿' in p or 'B' in p.upper()) and 'CAGR' in p or '增长' in p or '规模' in p:
+                decisions.append(f"市场: {p[:90]}")
+                break
+        if len(decisions) >= 2:
+            break
+
+    # 趋势分析：直接提取 - **趋势N**: xxx 格式
+    trends_section = get_section("趋势分析")
+    for m in re.finditer(r'\*\*趋势\s*(\d+)\*\*[:：]\s*([^\n]+)', trends_section):
+        num, name = m.group(1), m.group(2).strip()
+        milestones.append(f"趋势{num}: {name}")
+    # Fallback: - 趋势N: xxx 格式（无星号）
+    if not milestones:
+        for m in re.finditer(r'^-\s*趋势\s*(\d+)[:：]\s*([^\n]+)', trends_section, re.MULTILINE):
+            num, name = m.group(1), m.group(2).strip()
+            milestones.append(f"趋势{num}: {name}")
+
+    # 竞品分析：直接提取 - **竞品名称**: 格式
+    comp_section = get_section("竞品分析")
+    for m in re.finditer(r'\*\*([^*]+)\*\*[:：]', comp_section):
+        name = m.group(1).strip()
+        if len(name) > 1:
+            decisions.append(f"竞品: {name}")
+
+    # 目标用户：blockquote 内容
+    user_section = get_section("目标用户")
+    user_clean = re.sub(r'^\s*>\s*', '', user_section, flags=re.MULTILINE).strip()
+    if user_clean:
+        decisions.append(f"目标用户: {user_clean[:80]}")
+
+    # 技术栈建议：blockquote 或无序列表
+    tech_section = get_section("技术栈建议")
+    tech_clean = re.sub(r'^\s*>\s*', '', tech_section, flags=re.MULTILINE).strip()
+    if tech_clean:
+        techs = re.findall(r'[\w+#]+', tech_clean)
+        techs = [t for t in techs if len(t) > 1 and t not in ('和', '或', '等', '如')]
+        decisions.append(f"技术栈: {', '.join(techs[:8])}")
 
     lines = [l.strip() for l in text.split('\n') if l.strip() and not l.startswith('>') and not l.startswith('#') and not l.startswith('---')]
     summary = '\n'.join(lines[:6])[:300]
@@ -135,59 +160,106 @@ def parse_research(path: Path) -> dict:
         "tech_choices": [],
     }
 
-    # Fallback: if decisions+milestones are both empty, use bold items
-    if not result["decisions"] and not result["milestones"]:
-        fb = fallback(text, "research")
-        result["decisions"] = fb["decisions"]
-        result["milestones"] = fb["milestones"]
-        warn(path.parent.name, "research", "all", "used bold fallback")
+    # Fallback: 如果市场数据为空（SKILL.md 节结构被跳过），用 $ 定位原始文本
+    has_market = any('市场' in d for d in decisions)
+    if not has_market:
+        for line in text.split('\n'):
+            if '$' in line and len(line) > 15:
+                decisions.insert(0, f"市场规模: {line.strip()[:70]}")
+                break
 
     return result
-
-
 def parse_spec(path: Path) -> dict:
     text = path.read_text(encoding="utf-8")
     decisions = []
     milestones = []
 
+    # 按 SKILL.md 新格式的节结构拆分
+    sections = {}
+    for match in re.finditer(r'(?<!\n)##\s+([^\n]+)', text):
+        sections[match.group(1).strip()] = match.start()
+
+    def get_section(name_prefix: str) -> str:
+        matches = [(k, v) for k, v in sections.items() if k.startswith(name_prefix)]
+        if not matches:
+            return ""
+        _, start = sorted(matches, key=lambda x: len(x[0]))[0]
+        end = len(text)
+        for k, v in sections.items():
+            if v > start:
+                end = min(end, v)
+        return text[start:end]
+
     # 产品名
-    for pat in [r'\*\*产品名[：:]\s*([^\n]+)\*\*', r'产品名[：:]\s*([^\n]+)', r'项目名[：:]\s*([^\n]+)']:
+    for pat in [r'\*\*产品名[：:]\s*([^\n]+)\*\*', r'产品名[：:]\s*([^\n]+)']:
         m = re.search(pat, text)
         if m:
             decisions.append(f"产品名: {m.group(1).strip()}")
             break
 
     # 一句话描述
-    for pat in [r'一句话描述[：:]\s*([^\n]+)', r'\*\*一句话描述\*\*[：:]\s*([^\n]+)']:
+    for pat in [r'\*\*一句话描述\*\*[：:]\s*([^\n]+)', r'一句话描述[：:]\s*([^\n]+)']:
         m = re.search(pat, text)
         if m:
             decisions.append(f"定位: {m.group(1).strip()}")
             break
 
-    # 目标用户
-    for pat in [r'目标用户[：:]\s*([^\n]+)', r'\*\*目标用户\*\*[：:]\s*([^\n]+)']:
-        m = re.search(pat, text)
-        if m:
-            decisions.append(f"目标用户: {m.group(1).strip()}")
-            break
+    # 解决问题
+    solve = get_section("解决问题")
+    solve_clean = re.sub(r'^\s*>\s*', '', solve, flags=re.MULTILINE).strip()
+    if solve_clean:
+        decisions.append(f"解决: {solve_clean[:80]}")
 
-    # 功能小节 (### 2.1 xxx) — filter technical details
-    features = re.findall(r'^###\s+\d+\.\d+\s+([^\n]+)', text, re.MULTILINE)
-    tech_keywords = ['状态管理', 'localStorage', 'Keys', '数据模型', '技术选型', '非功能', '模型', 'API', '接口', 'Store']
-    for f in features:
-        s = f.strip()
-        if '(' in s or any(kw in s for kw in tech_keywords):
+    # 用户画像 — 提取 - **用户X**: xxx 格式
+    user_section = get_section("用户画像")
+    for m in re.finditer(r'- \*\*([^:]+)\*\*[:：]\s*([^\n]+)', user_section):
+        label = m.group(1).strip()
+        content = m.group(2).strip()
+        if label and content:
+            decisions.append(f"用户: {label}—{content[:60]}")
+
+    # 核心功能 — 提取 ### 1.1 <功能名称> 下的 描述/用户流程/输入/输出/边界
+    func_section = get_section("核心功能")
+    func_blocks = re.split(r'^###\s+\d+\.\d+', func_section, flags=re.MULTILINE)
+    for block in func_blocks[1:]:
+        # 取第一行作为功能名
+        lines = block.strip().split('\n')
+        if not lines:
             continue
-        if len(s) > 2:
-            milestones.append(s)
+        first = lines[0].strip()
+        if not first:
+            continue
+        # 提取描述（- 描述：xxx）
+        desc = re.search(r'- 描述[：:]\s*([^\n]+)', block)
+        if desc:
+            milestones.append(f"功能: {desc.group(1).strip()}")
+        elif len(first) > 2:
+            milestones.append(f"功能: {first[:60]}")
 
-    # 如果没有功能小节，提取加粗内容作为功能
-    if not milestones:
-        bold_items = re.findall(r'\*\*([^*]{5,50})\*\*', text)
-        for item in bold_items[:6]:
-            s = item.strip()
-            if len(s) > 5:
-                milestones.append(s)
+    # 技术决策
+    tech_section = get_section("技术决策")
+    tech_clean = re.sub(r'^\s*>\s*', '', tech_section, flags=re.MULTILINE).strip()
+    if tech_clean:
+        # 提取每行（去掉 - 和空白）
+        for line in tech_clean.split('\n'):
+            line = line.strip().lstrip('-').strip()
+            if line and len(line) > 3:
+                decisions.append(f"技术: {line[:70]}")
+
+    # 数据模型
+    data_section = get_section("数据模型")
+    for m in re.finditer(r'`(\w+)`', data_section):
+        entity = m.group(1).strip()
+        if len(entity) > 1:
+            decisions.append(f"数据: {entity}")
+
+    # 边界情况
+    edge_section = get_section("边界情况")
+    for m in re.finditer(r'([^：:]+)[：:]\s*([^\n]+)', edge_section):
+        key = m.group(1).strip()
+        val = m.group(2).strip()
+        if key and val and len(val) > 3:
+            milestones.append(f"边界: {key}—{val[:50]}")
 
     lines = [l.strip() for l in text.split('\n') if l.strip() and not l.startswith('#') and not l.startswith('>')]
     summary = '\n'.join(lines[:6])[:300]
@@ -196,7 +268,7 @@ def parse_spec(path: Path) -> dict:
         "bytes": len(text.encode('utf-8')),
         "summary": summary,
         "duration": None,
-        "decisions": decisions[:6],
+        "decisions": decisions[:8],
         "milestones": milestones[:8],
         "tech_choices": [],
     }
@@ -208,191 +280,3 @@ def parse_spec(path: Path) -> dict:
         warn(path.parent.name, "spec", "all", "used bold fallback")
 
     return result
-
-
-def parse_plan(path: Path) -> dict:
-    text = path.read_text(encoding='utf-8')
-    decisions = []
-    milestones = []
-
-    # 阶段标题 — 支持 noctern (## 阶段一：xxx) 和 inkflow (## 开发步骤)
-    stages = re.findall(r'## 阶段[一二三四五六]+[：:]\s*([^\n]+)', text)
-    if stages:
-        for name in stages[:6]:
-            decisions.append("阶段: " + name.strip())
-    else:
-        dev_steps = re.search(r'## 开发步骤', text)
-        if dev_steps:
-            decisions.append("阶段: 开发步骤")
-
-    # 完成项
-    done = extract_done_items(text)
-    milestones.extend(done[:8])
-
-    # 待完成项
-    pending = extract_pending_items(text)
-    milestones.extend(pending[:6])
-
-    # 编号步骤 (1. xxx) — skip bullets
-    steps = re.findall(r'(?:^|\n)\d+\.\s+([^\n]{5,80})', text)
-    for s in steps[:8]:
-        s = s.strip()
-        if s and len(s) > 3:
-            milestones.append(s[:60])
-
-    # 里程碑表格 (| M1：xxx |)
-    milestone_rows = re.findall(r'\|\s*M\d+[：:]\s*([^\n|]+)', text)
-    for m in milestone_rows[:5]:
-        s = m.strip()
-        if s: milestones.append(f"里程碑: {s}")
-
-    # 简化决策表格
-    fallback_rows = re.findall(r'\|\s*([^|]+)\s*\|\s*(?:降级|使用|直接|暂时)[^|]*\|', text)
-    for f in fallback_rows[:4]:
-        s = f.strip()
-        if s and not s.startswith('情况') and '---' not in s:
-            milestones.append(f"决策: {s}")
-
-    tech = extract_tech(text)
-    lines = [l.strip() for l in text.split('\n') if l.strip() and not l.startswith('#') and not l.startswith('>') and not l.startswith('|')]
-    summary = '\n'.join(lines[:6])[:300]
-
-    result = {
-        "bytes": len(text.encode('utf-8')),
-        "summary": summary,
-        "duration": None,
-        "decisions": decisions[:6],
-        "milestones": milestones[:10],
-        "tech_choices": list(set(tech)),
-    }
-
-    if not result["decisions"] and not result["milestones"]:
-        fb = fallback(text, "plan")
-        result["decisions"] = fb["decisions"]
-        result["milestones"] = fb["milestones"]
-        warn(path.parent.name, "plan", "all", "used bold fallback")
-
-    return result
-
-
-def parse_design(path: Path, english: bool = False) -> dict:
-    text = path.read_text(encoding='utf-8')
-    decisions = []
-    milestones = []
-
-    if english:
-        project = re.search(r'\*\*Project:\*\* ([^\n]+)', text)
-        if project: decisions.append(f"产品: {project.group(1).strip()}")
-        style_m = re.search(r'\*\*Style:\*\* ([^\n]+)', text)
-        if style_m: decisions.append(f"风格: {style_m.group(1).strip()}")
-        version = re.search(r'\*\*Version:\*\* ([^\n]+)', text)
-        if version: decisions.append(f"版本: {version.group(1).strip()}")
-        colors = re.findall(r'`(--[a-z-]+)`\s+\|\s+#([0-9a-fA-F]+)', text)
-        for name, hex in colors[:6]: decisions.append(f"色 -{name}: #{hex}")
-        heading = re.search(r'\*\*Heading Font:\*\* ([^\n]+)', text)
-        if heading: decisions.append(f"标题字体: {heading.group(1).strip()}")
-        ui = re.search(r'\*\*UI Font:\*\* ([^\n]+)', text)
-        if ui: decisions.append(f"正文字体: {ui.group(1).strip()}")
-        mono = re.search(r'\*\*Mono Font:\*\* ([^\n]+)', text)
-        if mono: decisions.append(f"代码字体: {mono.group(1).strip()}")
-        tech = extract_tech(text)
-    else:
-        # 中文 design-system.md
-        for pat in [r'设计方向[：:]\s*([^\n]+)', r'设计风格[：:]\s*([^\n]+)', r'风格预设[：:]\s*([^\n]+)']:
-            m = re.search(pat, text)
-            if m:
-                decisions.append(f"设计方向: {m.group(1).strip()}")
-                break
-
-        # Color tokens in table format
-        colors = re.findall(r'\|\s*`--([a-z-]+)`\s*\|\s*`#([0-9a-fA-F]+)`', text)
-        for name, hex in colors[:6]: decisions.append(f"色彩 -{name}: #{hex}")
-
-        # Also check ## 色彩系统 section
-        color_section = re.search(r'## 色彩系统.*?(?=##|\Z)', text, re.DOTALL)
-        if color_section:
-            tokens = re.findall(r'`--([a-z-]+)`\s*\|\s*#([0-9a-fA-F]+)', color_section.group(0))
-            for name, hex in tokens[:6]:
-                name2 = f"色彩 -{name}"
-                if name2 not in decisions:
-                    decisions.append(name2)
-
-        for pat in [r'字体[：:]\s*([^\n]+)', r'Heading\s+Font[：:]\s*([^\n]+)', r'标题字体[：:]\s*([^\n]+)', r'正文字体[：:]\s*([^\n]+)']:
-            m = re.search(pat, text)
-            if m:
-                decisions.append(f"字体: {m.group(1).strip()}")
-                break
-
-        tech = extract_tech(text)
-
-    lines = [l.strip() for l in text.split('\n') if l.strip() and not l.startswith('|') and not l.startswith('#')]
-    summary = '\n'.join(lines[:6])[:300]
-
-    result = {
-        "bytes": len(text.encode('utf-8')),
-        "summary": summary,
-        "duration": None,
-        "decisions": decisions[:10],
-        "milestones": milestones,
-        "tech_choices": list(set(tech)),
-    }
-
-    if not result["decisions"]:
-        fb = fallback(text, "design")
-        result["decisions"] = fb["decisions"]
-        warn(path.parent.name, "design", "decisions", "used bold fallback")
-
-    return result
-
-
-def generate_log(proj_dir: Path) -> dict:
-    name = proj_dir.name
-    log = {}
-    for phase, filenames in PHASE_FILES.items():
-        for fn in ([filenames] if isinstance(filenames, str) else filenames):
-            file_path = proj_dir / fn
-            if file_path.exists():
-                break
-        if file_path.exists():
-            try:
-                text = file_path.read_text(encoding='utf-8')
-                has_chinese = bool(re.search(r'[\u4e00-\u9fff]', text[:500]))
-                if phase == 'design':
-                    log[phase] = parse_design(file_path, english=not has_chinese)
-                elif phase == 'research':
-                    log[phase] = parse_research(file_path)
-                elif phase == 'spec':
-                    log[phase] = parse_spec(file_path)
-                elif phase == 'plan':
-                    log[phase] = parse_plan(file_path)
-            except Exception as e:
-                warn(name, phase, "parse", str(e))
-                text = file_path.read_text(encoding='utf-8')
-                log[phase] = {
-                    'bytes': len(text.encode('utf-8')),
-                    'summary': text[:300],
-                    'decisions': [],
-                    'milestones': [],
-                    'tech_choices': extract_tech(text),
-                }
-                warn(name, phase, "all", "exception fallback")
-    return log
-
-
-def main():
-    OUTPUT_BASE.mkdir(parents=True, exist_ok=True)
-    for proj_dir in sorted(WORKSPACE.iterdir()):
-        if not proj_dir.is_dir():
-            continue
-        name = proj_dir.name
-        print(f"Generating log for {name}...")
-        log = generate_log(proj_dir)
-        out_path = OUTPUT_BASE / f"{name}-log.json"
-        with open(out_path, 'w', encoding='utf-8') as f:
-            json.dump(log, f, ensure_ascii=False, indent=2)
-        print(f"  -> {out_path}")
-    print("Done.")
-
-
-if __name__ == '__main__':
-    main()
