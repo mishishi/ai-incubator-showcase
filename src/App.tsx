@@ -42,7 +42,7 @@ export default function App() {
     <div className="app">
       <Header />
 
-      <StatsBar />
+      <StatsBar projects={PROJECTS} />
 
       <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 24px 40px' }}>
         <Timeline />
