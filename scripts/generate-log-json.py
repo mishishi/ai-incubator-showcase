@@ -83,7 +83,7 @@ def parse_research(path: Path) -> dict:
 
     # 按 SKILL.md 定义的标准节结构拆分，不猜句子边界
     sections = {}
-    for match in re.finditer(r'(?<!\n)##\s+([^\n]+)', text):
+    for match in re.finditer(r'^##\s+([^\n]+)', text):
         sections[match.group(1).strip()] = match.start()
 
     def get_section(name_prefix: str) -> str:
@@ -91,8 +91,8 @@ def parse_research(path: Path) -> dict:
         matches = [(k, v) for k, v in sections.items() if k.startswith(name_prefix)]
         if not matches:
             return ""
-        # 取第一个匹配（最具体）
-        _, start = sorted(matches, key=lambda x: len(x[0]))[0]
+        # 取最长匹配（最具体）
+        _, start = sorted(matches, key=lambda x: len(x[0]))[-1]
         end = len(text)
         for k, v in sections.items():
             if v > start:
@@ -289,14 +289,14 @@ def parse_plan(path: Path) -> dict:
 
     # 按 SKILL.md 新格式的节结构拆分
     sections = {}
-    for match in re.finditer(r'(?<!\n)##\s+([^\n]+)', text):
+    for match in re.finditer(r'^##\s+([^\n]+)', text, re.MULTILINE):
         sections[match.group(1).strip()] = match.start()
 
     def get_section(name_prefix: str) -> str:
         matches = [(k, v) for k, v in sections.items() if k.startswith(name_prefix)]
         if not matches:
             return ""
-        _, start = sorted(matches, key=lambda x: len(x[0]))[0]
+        _, start = sorted(matches, key=lambda x: len(x[0]))[-1]
         end = len(text)
         for k, v in sections.items():
             if v > start:
@@ -305,10 +305,6 @@ def parse_plan(path: Path) -> dict:
 
     # 开发步骤 — 提取每个 Step 的名称、时间估算、完成标准
     steps_section = get_section("开发步骤")
-    # 直接从 ## 开发步骤 到 ## 里程碑 之间的内容，避免被 ### Step 里的 ## 干扰
-    steps_start = text.find('## 开发步骤')
-    ms_start = text.find('## 里程碑', steps_start + 1)
-    steps_section = text[steps_start:ms_start] if steps_start >= 0 else ''
     step_blocks = re.split(r'^###\s+Step\s*\d+[：:]\s*', steps_section, flags=re.MULTILINE)
     for block in step_blocks[1:]:
         lines = block.strip().split('\n')
