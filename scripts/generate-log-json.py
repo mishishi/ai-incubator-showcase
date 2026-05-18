@@ -80,12 +80,6 @@ def parse_research(path: Path) -> dict:
     decisions = []
     milestones = []
 
-    # 设计风格 / 方向
-    for pat in [r'设计风格[：:]\s*([^\n]+)', r'设计方向[：:]\s*([^\n]+)', r'风格预设[：:]\s*([^\n]+)']:
-        m = re.search(pat, text)
-        if m:
-            decisions.append(f"设计风格: {m.group(1).strip()}")
-            break
 
     # 市场数据
     mkt = re.findall(r'\$[\d.]+[MB].*?(?:CAGR|增长率|增长)', text[:500])
@@ -106,8 +100,7 @@ def parse_research(path: Path) -> dict:
         for n in names[:5]:
             decisions.append(f"竞品: {n.strip()}")
 
-    tech = extract_tech(text)
-    lines = [l.strip() for l in text.split('\n') if l.strip() and not l.startswith('>') and not l.startswith('#') and not l.startswith('---')]
+        lines = [l.strip() for l in text.split('\n') if l.strip() and not l.startswith('>') and not l.startswith('#') and not l.startswith('---')]
     summary = '\n'.join(lines[:6])[:300]
 
     return {
@@ -116,7 +109,7 @@ def parse_research(path: Path) -> dict:
         "duration": None,
         "decisions": decisions[:8],
         "milestones": milestones[:8],
-        "tech_choices": list(set(tech)),
+        "tech_choices": [],
     }
 
 
@@ -146,10 +139,16 @@ def parse_spec(path: Path) -> dict:
             decisions.append(f"目标用户: {m.group(1).strip()}")
             break
 
-    # 功能小节 (### 2.1 xxx)
+    # 功能小节 (### 2.1 xxx) — but filter out technical details
     features = re.findall(r'^###\s+\d+\.\d+\s+([^\n]+)', text, re.MULTILINE)
-    for f in features[:8]:
-        milestones.append(f.strip())
+    tech_keywords = ['状态管理', 'localStorage', 'Keys', '数据模型', '技术选型', '非功能', '模型', 'API', '接口', 'Store']
+    for f in features:
+        s = f.strip()
+        # Skip if contains parentheses or tech keywords
+        if '(' in s or any(kw in s for kw in tech_keywords):
+            continue
+        if len(s) > 2:
+            milestones.append(s)
 
     # 如果没有功能小节，提取加粗内容作为功能
     if not milestones:
@@ -159,7 +158,6 @@ def parse_spec(path: Path) -> dict:
             if len(s) > 5:
                 milestones.append(s)
 
-    tech = extract_tech(text)
     lines = [l.strip() for l in text.split('\n') if l.strip() and not l.startswith('#') and not l.startswith('>')]
     summary = '\n'.join(lines[:6])[:300]
 
@@ -169,7 +167,7 @@ def parse_spec(path: Path) -> dict:
         "duration": None,
         "decisions": decisions[:6],
         "milestones": milestones[:8],
-        "tech_choices": list(set(tech)),
+        "tech_choices": [],
     }
 
 
@@ -178,10 +176,16 @@ def parse_plan(path: Path) -> dict:
     decisions = []
     milestones = []
 
-    # 阶段标题 (### Step N 或 ## 阶段)
-    stages = re.findall(r'(?:Step|步骤|阶段)\s*(\d+)[：:]\s*([^\n]+)', text)
-    for num, name in stages[:5]:
-        decisions.append(f"阶段{num}: {name.strip()}")
+    # 阶段标题 — supports both noctern (阶段一：xxx) and inkflow (开发步骤)
+    stages = re.findall(r'## 阶段[一二三四五六]+[：:]\s*([^\n]+)', text)
+    if stages:
+        for name in stages[:6]:
+            decisions.append("阶段: " + name.strip())
+    else:
+        # inkflow format: use ## 开发步骤 as stage
+        dev_steps = re.search(r'## 开发步骤', text)
+        if dev_steps:
+            decisions.append("阶段: 开发步骤")
 
     # 完成项
     done = extract_done_items(text)
