@@ -34,6 +34,7 @@ def warn(proj: str, phase: str, field: str, msg: str):
 
 def extract_bold(text: str) -> list:
     """提取 **加粗** 和 ### 标题内容作为降级 fallback"""
+
     results = []
     for m in re.findall(r'\*\*([^*]+)\*\*', text):
         s = m.strip()
@@ -57,12 +58,12 @@ def extract_tech(text: str) -> list:
 
 def extract_done_items(text: str) -> list:
     done = re.findall(r'- \[x\]\s+([^\n`]+)', text)
-    return [f"✓ {d.strip()}" for d in done if len(d.strip()) > 3]
+    return [f"[完成] {d.strip()}" for d in done if len(d.strip()) > 3]
 
 
 def extract_pending_items(text: str) -> list:
     pending = re.findall(r'- \[ \]\s+([^\n`]+)', text)
-    return [f"○ {p.strip()}" for p in pending if len(p.strip()) > 3]
+    return [f"[待完成] {p.strip()}" for p in pending if len(p.strip()) > 3]
 
 
 def fallback(text: str, phase: str) -> dict:
@@ -80,15 +81,26 @@ def parse_research(path: Path) -> dict:
     decisions = []
     milestones = []
 
-    # 市场数据
-    mkt = re.findall(r'\$[\d.]+[MB].*?(?:CAGR|增长率|增长)', text[:500])
-    if not mkt:
-        mkt = re.findall(r'\$[\d.]+[MB]', text[:500])
-    for m in mkt[:2]:
-        decisions.append(f"市场: {m.strip()[:50]}")
+    # 市场数据 — 提取 ## 市场数据 整节内容作为完整句子
+    mkt_section = re.search(r'## 市场数据\s*\n(.*?)(?=\n##\s|\Z)', text, re.DOTALL)
+    if mkt_section:
+        section_text = mkt_section.group(1).strip()
+        # Extract sentences ending with 。or !
+        sentences = re.findall(r'[^。！？\n]{15,120}[。！？]', section_text)
+        for s in sentences[:2]:
+            s = s.strip()
+            if '$' in s:
+                decisions.append(f"市场: {s}")
+    else:
+        # Fallback: market data regex
+        mkt = re.findall(r'\$[\d.]+[MB].*?(?:CAGR|增长率|增长)', text[:500])
+        if not mkt:
+            mkt = re.findall(r'\$[\d.]+[MB]', text[:500])
+        for m in mkt[:2]:
+            decisions.append(f"市场规模: {m.strip()[:60]}")
 
-    # 趋势标题 (### 趋势N 或 ## 趋势)
-    trends = re.findall(r'趋势\s*(\d+)[：:]\s*([^\n]+)', text)
+    # 趋势标题 (支持 **趋势1** 或 趋势1：格式)
+    trends = re.findall(r'(?:\*\*)?趋势\s*(\d+)(?:\*\*)?[：:]\s*([^\n]+)', text)
     for num, name in trends[:3]:
         milestones.append(f"趋势{num}: {name.strip()}")
     if not trends:
