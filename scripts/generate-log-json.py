@@ -280,3 +280,136 @@ def parse_spec(path: Path) -> dict:
         warn(path.parent.name, "spec", "all", "used bold fallback")
 
     return result
+
+
+def parse_plan(path: Path) -> dict:
+    text = path.read_text(encoding="utf-8")
+    decisions = []
+    milestones = []
+
+    # 按 SKILL.md 新格式的节结构拆分
+    sections = {}
+    for match in re.finditer(r'(?<!\n)##\s+([^\n]+)', text):
+        sections[match.group(1).strip()] = match.start()
+
+    def get_section(name_prefix: str) -> str:
+        matches = [(k, v) for k, v in sections.items() if k.startswith(name_prefix)]
+        if not matches:
+            return ""
+        _, start = sorted(matches, key=lambda x: len(x[0]))[0]
+        end = len(text)
+        for k, v in sections.items():
+            if v > start:
+                end = min(end, v)
+        return text[start:end]
+
+    # 开发步骤 — 提取每个 Step 的名称、时间估算、完成标准
+    steps_section = get_section("开发步骤")
+    # 直接从 ## 开发步骤 到 ## 里程碑 之间的内容，避免被 ### Step 里的 ## 干扰
+    steps_start = text.find('## 开发步骤')
+    ms_start = text.find('## 里程碑', steps_start + 1)
+    steps_section = text[steps_start:ms_start] if steps_start >= 0 else ''
+    step_blocks = re.split(r'^###\s+Step\s*\d+[：:]\s*', steps_section, flags=re.MULTILINE)
+    for block in step_blocks[1:]:
+        lines = block.strip().split('\n')
+        if not lines:
+            continue
+        # 第一行：阶段名称 + 时间
+        header = lines[0].strip()
+        time_m = re.search(r'[（(]预计\s*(\d+)\s*分钟[）)]', header)
+        time_str = f"（{time_m.group(1)}分钟）" if time_m else ""
+        step_name = re.sub(r'[（(]预计.*?[）)]', '', header).strip()
+        if step_name:
+            decisions.append(f"Step: {step_name}{time_str}")
+        # 完成标准
+        std_m = re.search(r'完成标准[：:]\s*([^\n]+)', block)
+        if std_m:
+            milestones.append(f"标准: {std_m.group(1).strip()[:60]}")
+        # 待完成步骤（- [ ] xxx）
+        for m in re.finditer(r'- \[ \]\s+([^\n]+)', block):
+            item = m.group(1).strip()
+            if item and len(item) > 3:
+                milestones.append(f"[待完成] {item[:70]}")
+        # 已完成步骤（- [x] xxx）
+        for m in re.finditer(r'- \[x\]\s+([^\n]+)', block):
+            item = m.group(1).strip()
+            if item and len(item) > 3:
+                milestones.append(f"[完成] {item[:70]}")
+
+    # 里程碑表格 — 提取 M1/M2/M3 等
+    ms_section = get_section("里程碑")
+    ms_rows = re.findall(r'\|\s*M\d+[：:]\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|', ms_section)
+    for name, criteria in ms_rows:
+        name = name.strip()
+        criteria = criteria.strip()
+        if name:
+            decisions.append(f"里程碑: {name}")
+        if criteria and len(criteria) > 2:
+            milestones.append(f"验收: {criteria[:60]}")
+
+    # 如果新格式解析为空，fallback 到旧逻辑
+    lines = [l.strip() for l in text.split('\n') if l.strip() and not l.startswith('#') and not l.startswith('>')]
+    summary = '\n'.join(lines[:6])[:300]
+
+    result = {
+        "bytes": len(text.encode('utf-8')),
+        "summary": summary,
+        "duration": None,
+        "decisions": decisions[:8],
+        "milestones": milestones[:10],
+        "tech_choices": [],
+    }
+
+    if not result["decisions"] and not result["milestones"]:
+        fb = fallback(text, "plan")
+        result["decisions"] = fb["decisions"]
+        result["milestones"] = fb["milestones"]
+        warn(path.parent.name, "plan", "all", "used bold fallback")
+
+    return result
+
+
+def main():
+    parser_map = {
+        "research": parse_research,
+        "spec": parse_spec,
+        "plan": parse_plan,
+    }
+
+    for proj_dir in sorted(WORKSPACE.iterdir()):
+        if not proj_dir.is_dir():
+            continue
+        name = proj_dir.name
+        log_data = {}
+        for phase, filename in PHASE_FILES.items():
+            if isinstance(filename, list):
+                path = None
+                for f in filename:
+                    p = proj_dir / f
+                    if p.exists():
+                        path = p
+                        break
+            else:
+                path = proj_dir / filename
+
+            if not path or not path.exists():
+                continue
+
+            parser = parser_map.get(phase)
+            if parser:
+                try:
+                    log_data[phase] = parser(path)
+                except Exception as e:
+                    warn(name, phase, "parse", str(e))
+                    log_data[phase] = {"bytes": 0, "summary": "", "decisions": [], "milestones": [], "tech_choices": []}
+
+        if log_data:
+            out_path = OUTPUT_BASE / f"{name}-log.json"
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(log_data, f, ensure_ascii=False, indent=2)
+            print(f"Generated: {out_path.name}")
+
+
+if __name__ == "__main__":
+    main()
