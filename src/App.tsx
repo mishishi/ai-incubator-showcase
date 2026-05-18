@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { PROJECTS } from './data/projects';
 import type { Project } from './data/projects';
 import Header from './components/Header';
 import Card from './components/Card';
@@ -11,12 +10,20 @@ import SiteFooter from './components/SiteFooter';
 import './styles/global.css';
 
 export default function App() {
+  const [projects, setProjects] = useState<Project[]>([]);
   const [filter, setFilter] = useState('all');
   const [sortByScore, setSortByScore] = useState(false);
   const [selected, setSelected] = useState<Project | null>(null);
   const [activeIndex, setActiveIndex] = useState(-1);
 
-  const filtered = PROJECTS.filter(p => {
+  useEffect(() => {
+    fetch('/showcase/projects.json')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data && Array.isArray(data)) setProjects(data); })
+      .catch(() => {});
+  }, []);
+
+  const filtered = projects.filter(p => {
     if (filter === 'online') return p.status === 'online';
     if (filter === 'offline') return p.status !== 'online';
     return true;
@@ -42,10 +49,10 @@ export default function App() {
     <div className="app">
       <Header />
 
-      <StatsBar projects={PROJECTS} />
+      <StatsBar projects={projects} />
 
       <div className="app-content">
-        <Timeline projects={PROJECTS} />
+        <Timeline projects={projects} />
 
         <Toolbar
           activeFilter={filter}
