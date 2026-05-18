@@ -44,7 +44,7 @@ export default function App() {
 
       <StatsBar projects={PROJECTS} />
 
-      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 24px 40px' }}>
+      <div className="app-content">
         <Timeline projects={PROJECTS} />
 
         <Toolbar

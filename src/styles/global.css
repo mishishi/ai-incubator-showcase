@@ -179,3 +179,8 @@ button {
 .theme-custom { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
 .theme-custom input { flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 6px; font-size: 12px; outline: none; }
 .theme-custom button { background: var(--accent-dim); border: 1px solid var(--accent); color: var(--accent); padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+.app-content {
+  max-width: 1100px;
+  margin: 0px auto;
+  padding: 0px 24px 40px;
+}
