@@ -81,9 +81,33 @@ def parse_research(path: Path) -> dict:
     decisions = []
     milestones = []
 
+    # --- 优先：结构化 "key: value" 格式（每行以 key: 开头）---
+    _sd, _sm = [], []
+    for _line in text.split('\n'):
+        _line = _line.strip()
+        if not _line: continue
+        _m = re.match(r'^(市场|趋势\d*|竞品|目标用户|技术栈)[:：]\s*(.+)$', _line)
+        if _m:
+            _k, _v = _m.group(1), _m.group(2).strip()
+            if _v:
+                if re.match(r'^趋势\d+$', _k):
+                    _sm.append(f"{_k}: {_v[:80]}")
+                else:
+                    _sd.append(f"{_k}: {_v[:90]}")
+    # 如果结构化格式有内容，跳过 fallback
+    if _sd or _sm:
+        return {
+            "bytes": len(text.encode('utf-8')),
+            "summary": '',
+            "duration": None,
+            "decisions": _sd,
+            "milestones": _sm,
+            "tech_choices": [],
+        }
+
     # 按 SKILL.md 定义的标准节结构拆分，不猜句子边界
     sections = {}
-    for match in re.finditer(r'^##\s+([^\n]+)', text):
+    for match in re.finditer(r'^##\s+([^\n]+)', text, re.MULTILINE):
         sections[match.group(1).strip()] = match.start()
 
     def get_section(name_prefix: str) -> str:
@@ -110,7 +134,7 @@ def parse_research(path: Path) -> dict:
         parts = re.split(r'[；;]', line)
         for p in parts:
             p = p.strip()
-            if len(p) > 8 and ('$' in p or '亿' in p or 'B' in p.upper()) and 'CAGR' in p or '增长' in p or '规模' in p:
+            if len(p) > 8 and ('$' in p or '亿' in p or 'B' in p.upper()) and ('CAGR' in p or '增长' in p or '规模' in p):
                 decisions.append(f"市场: {p[:90]}")
                 break
         if len(decisions) >= 2:
@@ -118,7 +142,7 @@ def parse_research(path: Path) -> dict:
 
     # 趋势分析：直接提取 - **趋势N**: xxx 格式
     trends_section = get_section("趋势分析")
-    for m in re.finditer(r'\*\*趋势\s*(\d+)\*\*[:：]\s*([^\n]+)', trends_section):
+    for m in re.finditer(r'-\s+\*\*趋势\s*(\d+)\*\*[:：]\s*([^\n]+)', trends_section):
         num, name = m.group(1), m.group(2).strip()
         milestones.append(f"趋势{num}: {name}")
     # Fallback: - 趋势N: xxx 格式（无星号）
@@ -176,7 +200,7 @@ def parse_spec(path: Path) -> dict:
 
     # 按 SKILL.md 新格式的节结构拆分
     sections = {}
-    for match in re.finditer(r'(?<!\n)##\s+([^\n]+)', text):
+    for match in re.finditer(r'^##\s+([^\n]+)', text, re.MULTILINE):
         sections[match.group(1).strip()] = match.start()
 
     def get_section(name_prefix: str) -> str:
