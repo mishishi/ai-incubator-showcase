@@ -199,6 +199,26 @@ def parse_spec(path: Path) -> dict:
     milestones = []
 
     # 按 SKILL.md 新格式的节结构拆分
+    # --- 优先：结构化 "key: value" 格式 ---
+    _sd, _sm = [], []
+    for _line in text.split('\n'):
+        _line = _line.strip()
+        if not _line: continue
+        _m = re.match(r'^(定位|用户|核心价值|解决问题)[:：]\s*(.+)$', _line)
+        if _m:
+            _k, _v = _m.group(1), _m.group(2).strip()
+            if _v:
+                if _k == '边界':
+                    # Strip leading "- " from inline list items
+                    val = _v.lstrip('- ').strip()
+                    _sm.append(f"边界: {val[:70]}")
+                else:
+                    _sd.append(f"{_k}: {_v[:90]}")
+    # 如果有结构化内容，合并到 fallback 结果中
+    if _sd or _sm:
+        decisions.extend(_sd)
+        milestones.extend(_sm)
+
     sections = {}
     for match in re.finditer(r'^##\s+([^\n]+)', text, re.MULTILINE):
         sections[match.group(1).strip()] = match.start()
@@ -260,15 +280,6 @@ def parse_spec(path: Path) -> dict:
         elif len(first) > 2:
             milestones.append(f"功能: {first[:60]}")
 
-    # 技术决策
-    tech_section = get_section("技术决策")
-    tech_clean = re.sub(r'^\s*>\s*', '', tech_section, flags=re.MULTILINE).strip()
-    if tech_clean:
-        # 提取每行（去掉 - 和空白）
-        for line in tech_clean.split('\n'):
-            line = line.strip().lstrip('-').strip()
-            if line and len(line) > 3:
-                decisions.append(f"技术: {line[:70]}")
 
     # 数据模型
     data_section = get_section("数据模型")
@@ -277,13 +288,6 @@ def parse_spec(path: Path) -> dict:
         if len(entity) > 1:
             decisions.append(f"数据: {entity}")
 
-    # 边界情况
-    edge_section = get_section("边界情况")
-    for m in re.finditer(r'([^：:]+)[：:]\s*([^\n]+)', edge_section):
-        key = m.group(1).strip()
-        val = m.group(2).strip()
-        if key and val and len(val) > 3:
-            milestones.append(f"边界: {key}—{val[:50]}")
 
     lines = [l.strip() for l in text.split('\n') if l.strip() and not l.startswith('#') and not l.startswith('>')]
     summary = '\n'.join(lines[:6])[:300]
@@ -305,65 +309,64 @@ def parse_spec(path: Path) -> dict:
 
     return result
 
-
 def parse_design(path: Path) -> dict:
     """解析设计系统文件。"""
     text = path.read_text(encoding="utf-8")
     decisions = []
     milestones = []
 
-    # --- 优先：结构化 "key: value" 格式 ---
+    # --- 优先：结构化格式 ---
     for line in text.split('\n'):
         line = line.strip()
-        if not line:
-            continue
-        m = re.match(r'^(风格|字体|色彩|组件|图标)[:：]\s*(.+)$', line)
+        if not line: continue
+        m = re.match(r'^(风格|色彩|字体|图标|圆角|动效|组件)[:：]\s*(.+)$', line)
         if m:
             k, v = m.group(1), m.group(2).strip()
             if v:
-                decisions.append(f"{k}: {v[:80]}")
+                if k == '组件':
+                    milestones.append(f"组件: {v[:50]}")
+                else:
+                    decisions.append(f"{k}: {v[:80]}")
 
     # --- Fallback：节结构解析 ---
-    if not decisions:
+    if not decisions and not milestones:
         sections = {}
         for match in re.finditer(r'^##\s+([^\n]+)', text, re.MULTILINE):
             sections[match.group(1).strip()] = match.start()
 
         def get_section(prefix):
-            matches = [(k, val) for k, val in sections.items() if k.startswith(prefix)]
-            if not matches:
-                return ""
+            matches = [(k, v) for k, v in sections.items() if k.startswith(prefix)]
+            if not matches: return ""
             _, start = sorted(matches, key=lambda x: len(x[0]))[-1]
             end = len(text)
-            for k, val in sections.items():
-                if val > start:
-                    end = min(end, val)
+            for k, v in sections.items():
+                if v > start: end = min(end, v)
             return text[start:end]
 
-        style = get_section("设计方向")
-        if style:
-            m = re.search(r'\*\*风格\*\*[:：]\s*([^\n]+)', style)
-            if m:
-                decisions.append(f"风格: {m.group(1).strip()[:80]}")
+        # 风格
+        style_section = get_section("设计方向")
+        m = re.search(r'\*\*风格\*\*[:：]\s*([^\n]+)', style_section)
+        if m: decisions.append(f"风格: {m.group(1).strip()[:80]}")
 
+        # 色彩 token
         color_section = get_section("色彩系统")
-        for m in re.finditer(r'`([^`]+)`\s*[,，]\s*(#[0-9A-Fa-f]{3,6})', color_section):
-            decisions.append(f"色彩: {m.group(1).strip()} {m.group(2)}")
+        for m2 in re.finditer(r'`(--[a-z-]+)`\s*[,，]\s*(#[0-9A-Fa-f]{3,8})', color_section):
+            decisions.append(f"色彩: {m2.group(1)} {m2.group(2)}")
+        for m2 in re.finditer(r'(#[0-9A-Fa-f]{6})\s*[,，]\s*([^\n]+)', color_section):
+            decisions.append(f"色彩: {m2.group(1)} {m2.group(2).strip()[:40]}")
 
+        # 字体
         font_section = get_section("字体系统")
-        font_lines = [l.strip() for l in font_section.split('\n') if l.strip().startswith('**')]
-        for l in font_lines[:3]:
-            m = re.search(r'\*\*([^\*]+)\*\*[:：]\s*(.+)', l)
-            if m:
-                decisions.append(f"字体: {m.group(1)} {m.group(2).strip()[:60]}")
+        for m2 in re.finditer(r'\*\*([^\*]+)\*\*[:：]\s*(.+)', font_section):
+            decisions.append(f"字体: {m2.group(1).strip()} {m2.group(2).strip()[:60]}")
 
+        # 组件规范
         comp_section = get_section("组件规范")
         if comp_section:
             parts = re.split(r'\n### ', comp_section)
-            for p in parts[1:4]:
+            for p in parts[1:7]:
                 name = p.split('\n')[0].strip()
-                if name:
-                    milestones.append(f"组件: {name}")
+                if name: milestones.append(f"组件: {name}")
 
     return {
         "bytes": len(text.encode("utf-8")),
@@ -373,6 +376,9 @@ def parse_design(path: Path) -> dict:
         "milestones": milestones[:6],
         "tech_choices": [],
     }
+
+
+
 def parse_plan(path: Path) -> dict:
     text = path.read_text(encoding="utf-8")
     decisions = []
