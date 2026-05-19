@@ -306,6 +306,73 @@ def parse_spec(path: Path) -> dict:
     return result
 
 
+def parse_design(path: Path) -> dict:
+    """解析设计系统文件。"""
+    text = path.read_text(encoding="utf-8")
+    decisions = []
+    milestones = []
+
+    # --- 优先：结构化 "key: value" 格式 ---
+    for line in text.split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+        m = re.match(r'^(风格|字体|色彩|组件|图标)[:：]\s*(.+)$', line)
+        if m:
+            k, v = m.group(1), m.group(2).strip()
+            if v:
+                decisions.append(f"{k}: {v[:80]}")
+
+    # --- Fallback：节结构解析 ---
+    if not decisions:
+        sections = {}
+        for match in re.finditer(r'^##\s+([^\n]+)', text, re.MULTILINE):
+            sections[match.group(1).strip()] = match.start()
+
+        def get_section(prefix):
+            matches = [(k, val) for k, val in sections.items() if k.startswith(prefix)]
+            if not matches:
+                return ""
+            _, start = sorted(matches, key=lambda x: len(x[0]))[-1]
+            end = len(text)
+            for k, val in sections.items():
+                if val > start:
+                    end = min(end, val)
+            return text[start:end]
+
+        style = get_section("设计方向")
+        if style:
+            m = re.search(r'\*\*风格\*\*[:：]\s*([^\n]+)', style)
+            if m:
+                decisions.append(f"风格: {m.group(1).strip()[:80]}")
+
+        color_section = get_section("色彩系统")
+        for m in re.finditer(r'`([^`]+)`\s*[,，]\s*(#[0-9A-Fa-f]{3,6})', color_section):
+            decisions.append(f"色彩: {m.group(1).strip()} {m.group(2)}")
+
+        font_section = get_section("字体系统")
+        font_lines = [l.strip() for l in font_section.split('\n') if l.strip().startswith('**')]
+        for l in font_lines[:3]:
+            m = re.search(r'\*\*([^\*]+)\*\*[:：]\s*(.+)', l)
+            if m:
+                decisions.append(f"字体: {m.group(1)} {m.group(2).strip()[:60]}")
+
+        comp_section = get_section("组件规范")
+        if comp_section:
+            parts = re.split(r'\n### ', comp_section)
+            for p in parts[1:4]:
+                name = p.split('\n')[0].strip()
+                if name:
+                    milestones.append(f"组件: {name}")
+
+    return {
+        "bytes": len(text.encode("utf-8")),
+        "summary": "",
+        "duration": None,
+        "decisions": decisions[:6],
+        "milestones": milestones[:6],
+        "tech_choices": [],
+    }
 def parse_plan(path: Path) -> dict:
     text = path.read_text(encoding="utf-8")
     decisions = []
@@ -394,6 +461,7 @@ def main():
         "research": parse_research,
         "spec": parse_spec,
         "plan": parse_plan,
+        "design": parse_design,
     }
 
     for proj_dir in sorted(WORKSPACE.iterdir()):
