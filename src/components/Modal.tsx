@@ -20,8 +20,7 @@ export default function Modal({ project, onClose }: Props) {
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [accentColor, setAccentColor] = useState('#E07A3A');
   const [score, setScore] = useState<number | null>(null);
-  const [logs, setLogs] = useState<{[key: string]: LogEntry}>({});
-  const [openLogs, setOpenLogs] = useState<Set<string>>(new Set());
+  const [, setLogs] = useState<{[key: string]: LogEntry}>({});
 
   const voteCount = votes[project.name] || 0;
   const projectComments = comments[project.name] || [];
@@ -64,13 +63,6 @@ export default function Modal({ project, onClose }: Props) {
   const applyColor = (hex: string) => {
     setAccentColor(hex);
     document.documentElement.style.setProperty('--accent', hex);
-  };
-
-  const PHASE_NAMES: {[key: string]: string} = {
-    research: '市场调研',
-    spec: '产品定义',
-    plan: '开发计划',
-    design: '设计系统',
   };
 
   return (

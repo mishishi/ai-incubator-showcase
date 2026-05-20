@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, lazy, Suspense } from 'react'
 import { Routes, Route, useParams, useNavigate } from 'react-router-dom'
 import type { Project } from './data/projects'
 import Header from './components/Header'
@@ -9,6 +9,8 @@ import Toolbar from './components/Toolbar'
 import Timeline from './components/Timeline'
 import SiteFooter from './components/SiteFooter'
 import './styles/global.css'
+
+const AdminPage = lazy(() => import('./admin/AdminPage'))
 
 type VotesMap = {[key: string]: number}
 type VotedMap = {[key: string]: boolean}
@@ -267,6 +269,7 @@ export default function App() {
         <Route path="/" element={<Home />} />
         <Route path="/project/:name" element={<ProjectPage />} />
         <Route path="/project/:name/" element={<ProjectPage />} />
+        <Route path="/admin/" element={<Suspense fallback={<div style={{padding:40,textAlign:'center',color:'var(--text-dim)'}}>Loading...</div>}><AdminPage /></Suspense>} />
       </Routes>
     </div>
   )
